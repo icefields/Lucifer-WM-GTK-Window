@@ -74,12 +74,13 @@ local App = Gtk.Application({
 })
 
 function App:on_startup()
-  Gtk.ApplicationWindow({
+  local window = Gtk.ApplicationWindow({
     application = self,
     default_width = winWidth,
     default_height = winHeight,
     border_width = 0
   })
+  window:set_wmclass("luci-sixsixsix-wm-gtkwindow", "Lucifer GTK Window")
 end
 
 function App:on_activate()
