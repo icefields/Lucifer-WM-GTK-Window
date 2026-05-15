@@ -100,8 +100,10 @@ function App:on_activate()
   for i, tab in ipairs(tabs) do
     local titleFallback = tab.titleFallback or ("Tab " .. i)
     local interval = tab.interval or 0
-    local font = tab.font or "Monospace 12"
-    local fontSize = font:match("(%d+)") or "12"
+    local contentFont = tab.contentFont or "JetBrainsMono Nerd Font Mono"
+    local contentFontSize = tab.contentFontSize or 12
+    local tabTitleFont = tab.tabTitleFont or "sans-serif"
+    local tabTitleFontSize = tab.tabTitleFontSize or 12
 
     -- Tab label starts with fallback title; updated on first load
     local tabLabel = Gtk.Label({
@@ -112,7 +114,7 @@ function App:on_activate()
 
     -- Emoji font fallback for tab labels
     local tabCss = Gtk.CssProvider()
-    local tabCssText = "label { font-family: sans-serif, 'Noto Color Emoji', 'Emoji One', emoji; }"
+    local tabCssText = "label { font-family: '" .. tabTitleFont .. "', 'Noto Color Emoji', emoji; font-size: " .. tabTitleFontSize .. "pt; }"
     tabCss:load_from_data(tabCssText, #tabCssText)
     tabLabel:get_style_context():add_provider(tabCss, 600)
 
@@ -133,9 +135,9 @@ function App:on_activate()
     })
     contentLabels[i] = contentLabel
 
-    -- Per-label CSS for monospace font
+    -- Per-label CSS: use Nerd Font Mono for symbols, Noto Color Emoji for emoji
     local cssProvider = Gtk.CssProvider()
-    local css = "label { font-family: monospace, 'Noto Color Emoji', 'Emoji One', emoji; font-size: " .. fontSize .. "pt; }"
+    local css = "label { font-family: '" .. contentFont .. "', 'Noto Color Emoji', monospace; font-size: " .. contentFontSize .. "pt; }"
     cssProvider:load_from_data(css, #css)
     contentLabel:get_style_context():add_provider(cssProvider, 600)
 

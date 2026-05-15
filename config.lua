@@ -8,12 +8,15 @@ return {
 
   tabs = {
     {
-      command = "curl -s wttr.in?0",
+      command = "curl -s wttr.in?Tm",
       fallback = "Weather unavailable",
       titleScript = "echo '🌤 Weather'",
       titleFallback = "Weather",
       interval = 300,
-      font = "JetBrains Mono 12",
+      contentFont = "JetBrainsMono Nerd Font Mono",
+      contentFontSize = 9,
+      tabTitleFont = "sans-serif",
+      tabTitleFontSize = 12,
     },
     {
       command = "curl -s rate.sx/btc",
@@ -21,15 +24,21 @@ return {
       titleScript = "echo '₿ BTC'",
       titleFallback = "BTC",
       interval = 300,
-      font = "JetBrains Mono 12",
+      contentFont = "JetBrainsMono Nerd Font Mono",
+      contentFontSize = 11,
+      tabTitleFont = "sans-serif",
+      tabTitleFontSize = 12,
     },
     {
       command = "neofetch --stdout 2>/dev/null || echo 'System info unavailable'",
       fallback = "System info unavailable",
       titleScript = "echo '🖥 System'",
       titleFallback = "System",
-      interval = 0,  -- no auto-refresh, fetch once
-      font = "JetBrains Mono 12",
+      interval = 0,
+      contentFont = "JetBrainsMono Nerd Font Mono",
+      contentFontSize = 11,
+      tabTitleFont = "sans-serif",
+      tabTitleFontSize = 12,
     },
   },
 }
