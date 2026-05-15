@@ -1,0 +1,47 @@
+# Maintainer: Devilplan <midori@devilplan.com>
+# Build: makepkg -sf
+# Install: pacman -U lua-lgi-patched-*.pkg.tar.zst
+
+pkgname=lua-lgi-patched
+pkgver=0.9.2.r128.gdfa8297
+pkgrel=1
+pkgdesc="Lua GObject introspection bindings (patched for Lua 5.5 + modern GLib 2.87+)"
+arch=(x86_64)
+url="https://github.com/pavouk/lgi"
+license=(MIT)
+depends=(glibc glib2 libffi gobject-introspection-runtime lua)
+makedepends=(git gobject-introspection)
+provides=(lua-lgi=$pkgver)
+conflicts=(lua-lgi lua-lgi-git)
+source=("git+https://github.com/pavouk/lgi.git#commit=dfa8297"
+        "lua55-const-loop-var.patch"
+        "glib287-enum-iteration.patch")
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+prepare() {
+  cd lgi
+  git apply "$srcdir/lua55-const-loop-var.patch"
+  git apply "$srcdir/glib287-enum-iteration.patch"
+}
+
+build() {
+  cd lgi
+  make LUA_VERSION=5.5 LUA_INCDIR=/usr/include
+}
+
+package() {
+  cd lgi
+
+  install -Dm644 lgi.lua "$pkgdir/usr/share/lua/5.5/lgi.lua"
+  install -Dm755 lgi/corelgilua51.so "$pkgdir/usr/lib/lua/5.5/lgi/corelgilua51.so"
+
+  for f in lgi/*.lua; do
+    install -Dm644 "$f" "$pkgdir/usr/share/lua/5.5/lgi/$(basename "$f")"
+  done
+
+  for f in lgi/override/*.lua; do
+    install -Dm644 "$f" "$pkgdir/usr/share/lua/5.5/lgi/override/$(basename "$f")"
+  done
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

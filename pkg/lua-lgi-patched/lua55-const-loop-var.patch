@@ -1,0 +1,64 @@
+From: Devilplan <midori@devilplan.com>
+Subject: [PATCH] Fix Lua 5.5 const loop variable errors
+
+Lua 5.5 makes for-loop variables read-only (const). Reassigning them
+inside the loop body causes "attempt to assign to const variable" errors.
+
+Use local variables instead of reassigning loop vars.
+
+--- a/lgi/component.lua
++++ b/lgi/component.lua
+@@ -56,7 +56,7 @@
+       local ei, val, en
+       while #index > 0 do
+ 	 ei = children[table.remove(index)]
+ 	 val = xvalue(ei)
+-	 en = ei.name
++	 local en = ei.name
+ 	 en = not xform_name_reverse and en or xform_name_reverse(en)
+ 	 if en then category[en] = val end
+       end
+@@ -66,8 +66,8 @@
+       for en, idx in pairs(index) do
+ 	 val = xvalue(children[idx])
+-	 en = not xform_name_reverse and en or xform_name_reverse(en)
+-	 if en then category[en] = val end
++	 local en_name = not xform_name_reverse and en or xform_name_reverse(en)
++	 if en_name then category[en_name] = val end
+       end
+
+       -- Metatable is no longer needed, disconnect it.
+--- a/lgi/override/Gtk.lua
++++ b/lgi/override/Gtk.lua
+@@ -326,7 +326,8 @@
+ local function treemodel_prepare_values(model, values)
+    local cols, vals = {}, {}
+    for column, value in pairs(values) do
+-      column = column - 1
++      local col = column - 1
+-      cols[#cols + 1] = column
+-      vals[#vals + 1] = GObject.Value(model:get_column_type(column), value)
++      cols[#cols + 1] = col
++      vals[#vals + 1] = GObject.Value(model:get_column_type(col), value)
+    end
+--- a/lgi/override/GObject-Value.lua
++++ b/lgi/override/GObject-Value.lua
+@@ -84,7 +84,8 @@
+ 
+ local value_marshallers = {}
+ for name, gtype in pairs(Type) do
+-   name = core.downcase(name)
++   local lname = core.downcase(name)
+-   local get = Value['get_' .. name]
+-   local set = Value['set_' .. name]
++   local get = Value['get_' .. lname]
++   local set = Value['set_' .. lname]
+@@ -113,7 +114,8 @@
+ -- or sets of string flags.
+ for name, gtype in pairs { ENUM = Type.ENUM, FLAGS = Type.FLAGS } do
+-   name = core.downcase(name)
++   local lname = core.downcase(name)
+-   local get = Value._method['get_' .. name]
+-   local set = Value._method['set_' .. name]
++   local get = Value._method['get_' .. lname]
++   local set = Value._method['set_' .. lname]

@@ -1,0 +1,20 @@
+# Maintainer: Devilplan <midori@devilplan.com>
+# Build: makepkg -sf
+# Install: pacman -U lgiwindow-*.pkg.tar.zst
+
+pkgname=lgiwindow
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Tabbed GTK3 window that renders CLI command output in monospace"
+arch=(any)
+url="https://github.com/devilplan/lgiwindow"
+license=(MIT)
+depends=(lua lua-lgi-patched gtk3 curl)
+source=("main.lua"
+        "config.lua")
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/main.lua" "$pkgdir/usr/bin/lgiwindow"
+  install -Dm644 "$srcdir/config.lua" "$pkgdir/etc/lgiwindow/config.lua"
+}

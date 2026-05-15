@@ -1,16 +1,30 @@
 #!/usr/bin/env lua
 -- LGIwindow: Tabbed GTK window rendering CLI command output in monospace
 -- Usage: lua main.lua [config_path]
---        config_path defaults to ./config.lua
+--        config_path defaults to ~/.config/lgiwindow/config.lua
+--
+-- Tabs are lazy-loaded: content is fetched only when a tab is first viewed.
+
+-- Set up local LGI paths (bundled in ./lgi/)
+local this_dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
+package.path = this_dir .. "lgi/?.lua;" .. package.path
+package.cpath = this_dir .. "lgi/?.so;" .. package.cpath
 
 local lgi = require("lgi")
 local Gtk = lgi.require("Gtk", "3.0")
 local GLib = lgi.require("GLib", "2.0")
 local Pango = lgi.require("Pango", "1.0")
 
--- Load config
-local this_dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
-local configPath = arg[1] or (this_dir .. "config.lua")
+-- Config search: 1) CLI arg, 2) XDG config dir, 3) same dir as script
+local function findConfig()
+  if arg[1] then return arg[1] end
+  local xdg = os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")
+  local xdgPath = xdg .. "/lgiwindow/config.lua"
+  local f = io.open(xdgPath, "r")
+  if f then f:close(); return xdgPath end
+  return this_dir .. "config.lua"
+end
+local configPath = findConfig()
 local config = dofile(configPath)
 
 local tabs = config.tabs or {}
@@ -36,6 +50,22 @@ local function runOrFallback(cmd, fallback)
   local result = runCommand(cmd)
   if result then return result end
   return fallback or "N/A"
+end
+
+-- Track which tabs have been loaded
+local loaded = {}
+
+-- Widget references (indexed by tab number)
+local tabLabels = {}
+local contentLabels = {}
+
+-- Fetch content and title for a tab, update the labels
+local function loadTab(i)
+  if loaded[i] then return end
+  loaded[i] = true
+  local tab = tabs[i]
+  contentLabels[i]:set_text(runOrFallback(tab.command, tab.fallback or "N/A"))
+  tabLabels[i]:set_text(runOrFallback(tab.titleScript, tab.titleFallback or ("Tab " .. i)))
 end
 
 -- Create the application
@@ -68,29 +98,21 @@ function App:on_activate()
   })
 
   for i, tab in ipairs(tabs) do
-    local cmd = tab.command
-    local fallback = tab.fallback or "N/A"
-    local titleScript = tab.titleScript
     local titleFallback = tab.titleFallback or ("Tab " .. i)
     local interval = tab.interval or 0
     local font = tab.font or "Monospace 12"
-
-    -- Extract font size for CSS
     local fontSize = font:match("(%d+)") or "12"
 
-    -- Get initial tab title
-    local tabTitle = runOrFallback(titleScript, titleFallback)
-
-    -- Tab label
+    -- Tab label starts with fallback title; updated on first load
     local tabLabel = Gtk.Label({
       visible = true,
-      label = tabTitle
+      label = titleFallback
     })
+    tabLabels[i] = tabLabel
 
-    -- Content label
     local contentLabel = Gtk.Label({
       visible = true,
-      label = fallback,
+      label = "Loading...",
       selectable = true,
       halign = Gtk.Align.START,
       valign = Gtk.Align.START,
@@ -103,15 +125,14 @@ function App:on_activate()
       margin_start = 10,
       margin_end = 10
     })
+    contentLabels[i] = contentLabel
 
     -- Per-label CSS for monospace font
     local cssProvider = Gtk.CssProvider()
     local css = "label { font-family: monospace; font-size: " .. fontSize .. "pt; }"
     cssProvider:load_from_data(css, #css)
-    local styleContext = contentLabel:get_style_context()
-    styleContext:add_provider(cssProvider, 600)
+    contentLabel:get_style_context():add_provider(cssProvider, 600)
 
-    -- Scrollable container
     local scrolled = Gtk.ScrolledWindow({
       visible = true,
       hscrollbar_policy = Gtk.PolicyType.AUTOMATIC,
@@ -121,22 +142,29 @@ function App:on_activate()
     })
     scrolled:add(contentLabel)
 
-    -- Initial content fetch
-    local content = runOrFallback(cmd, fallback)
-    contentLabel:set_text(content)
-
-    -- Auto-refresh
+    -- Auto-refresh (starts after first load)
     if interval > 0 then
       GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, interval, function()
-        local newContent = runOrFallback(cmd, fallback)
-        contentLabel:set_text(newContent)
-        local newTitle = runOrFallback(titleScript, titleFallback)
-        tabLabel:set_text(newTitle)
+        if not loaded[i] then return true end
+        contentLabel:set_text(runOrFallback(tab.command, tab.fallback or "N/A"))
+        tabLabel:set_text(runOrFallback(tab.titleScript, titleFallback))
         return true
       end)
     end
 
     notebook:append_page(scrolled, tabLabel)
+  end
+
+  -- Lazy-load: first tab immediately, others on switch
+  if #tabs > 0 then
+    loadTab(1)
+  end
+
+  function notebook:on_switch_page(page, page_num)
+    local i = page_num + 1
+    if tabs[i] and not loaded[i] then
+      loadTab(i)
+    end
   end
 
   window:add(notebook)
