@@ -110,6 +110,12 @@ function App:on_activate()
     })
     tabLabels[i] = tabLabel
 
+    -- Emoji font fallback for tab labels
+    local tabCss = Gtk.CssProvider()
+    local tabCssText = "label { font-family: sans-serif, 'Noto Color Emoji', 'Emoji One', emoji; }"
+    tabCss:load_from_data(tabCssText, #tabCssText)
+    tabLabel:get_style_context():add_provider(tabCss, 600)
+
     local contentLabel = Gtk.Label({
       visible = true,
       label = "Loading...",
@@ -129,7 +135,7 @@ function App:on_activate()
 
     -- Per-label CSS for monospace font
     local cssProvider = Gtk.CssProvider()
-    local css = "label { font-family: monospace; font-size: " .. fontSize .. "pt; }"
+    local css = "label { font-family: monospace, 'Noto Color Emoji', 'Emoji One', emoji; font-size: " .. fontSize .. "pt; }"
     cssProvider:load_from_data(css, #css)
     contentLabel:get_style_context():add_provider(cssProvider, 600)
 
