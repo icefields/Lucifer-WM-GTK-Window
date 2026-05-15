@@ -5,8 +5,18 @@
 --
 -- Tabs are lazy-loaded: content is fetched only when a tab is first viewed.
 
--- Set up local LGI paths (bundled in ./lgi/)
-local this_dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
+-- Resolve the script's directory (works when called from any path)
+local this_dir = debug.getinfo(1, "S").source:match("^@(.*/)") 
+if not this_dir then
+  -- Fallback: resolve from arg[0]
+  this_dir = arg[0] and arg[0]:match("^(.*/)") or "./"
+end
+-- Make absolute
+if not this_dir:find("^/") then
+  local cwd = io.popen("pwd"):read("*a"):gsub("\n$", "")
+  this_dir = cwd .. "/" .. this_dir
+end
+
 package.path = this_dir .. "lgi/?.lua;" .. package.path
 package.cpath = this_dir .. "lgi/?.so;" .. package.cpath
 
