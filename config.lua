@@ -1,20 +1,20 @@
--- LGIwindow config
+-- Lucifer GTK Window config
 -- Each tab runs a CLI command and displays its output in monospace
 --
 -- interval: auto-refresh in seconds. 0 = no auto-refresh (fetch once on load)
 
 return {
-  title = "LGIwindow",
+  title = "Lucifer GTK Window",
 
   tabs = {
     {
-      command = "curl -s wttr.in?Tm",
+      command = "curl -s wttr.in?0",
       fallback = "Weather unavailable",
       titleScript = "echo '🌤 Weather'",
       titleFallback = "Weather",
       interval = 300,
       contentFont = "JetBrainsMono Nerd Font Mono",
-      contentFontSize = 9,
+      contentFontSize = 11,
       tabTitleFont = "sans-serif",
       tabTitleFontSize = 12,
     },

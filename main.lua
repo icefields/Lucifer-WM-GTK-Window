@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
--- LGIwindow: Tabbed GTK window rendering CLI command output in monospace
+-- Lucifer GTK Window: Tabbed GTK window rendering CLI command output in monospace
 -- Usage: lua main.lua [config_path]
---        config_path defaults to ~/.config/lgiwindow/config.lua
+--        config_path defaults to ~/.config/luci-sixsixsix-wm-gtkwindow/config.lua
 --
 -- Tabs are lazy-loaded: content is fetched only when a tab is first viewed.
 
@@ -19,7 +19,7 @@ local Pango = lgi.require("Pango", "1.0")
 local function findConfig()
   if arg[1] then return arg[1] end
   local xdg = os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")
-  local xdgPath = xdg .. "/lgiwindow/config.lua"
+  local xdgPath = xdg .. "/luci-sixsixsix-wm-gtkwindow/config.lua"
   local f = io.open(xdgPath, "r")
   if f then f:close(); return xdgPath end
   return this_dir .. "config.lua"
@@ -28,7 +28,7 @@ local configPath = findConfig()
 local config = dofile(configPath)
 
 local tabs = config.tabs or {}
-local winTitle = config.title or "LGIwindow"
+local winTitle = config.title or "Lucifer GTK Window"
 local winWidth = tabs[1] and tabs[1].width or 720
 local winHeight = tabs[1] and tabs[1].height or 480
 
@@ -70,7 +70,7 @@ end
 
 -- Create the application
 local App = Gtk.Application({
-  application_id = "com.devilplan.lgiwindow"
+  application_id = "luci.sixsixsix.wm.gtkwindow"
 })
 
 function App:on_startup()

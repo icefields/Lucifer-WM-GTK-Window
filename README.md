@@ -1,8 +1,10 @@
-# LGIwindow
+# Lucifer GTK Window
 
 A tabbed GTK3 window that renders CLI command output in monospace.
 
 Each tab runs a shell command, displays the result, and optionally auto-refreshes. Tab titles can also be generated from a script. The project is self-contained — bundled LGI is included in `lgi/`, no system install needed.
+
+**App ID:** `luci.sixsixsix.wm.gtkwindow`
 
 ## Usage
 
@@ -12,23 +14,26 @@ lua main.lua [config_path]
 
 Config search order:
 1. CLI argument
-2. `~/.config/lgiwindow/config.lua`
+2. `~/.config/luci-sixsixsix-wm-gtkwindow/config.lua`
 3. `config.lua` next to the script
 
 ## Config
 
 ```lua
 return {
-  title = "LGIwindow",   -- window header bar title
+  title = "Lucifer GTK Window",   -- window header bar title
 
   tabs = {
     {
-      command = "curl -s wttr.in?0",    -- shell command to run
-      fallback = "Weather unavailable",  -- shown if command fails
-      titleScript = "echo '🌤 Weather'", -- script for tab title (nil = skip)
-      titleFallback = "Weather",          -- tab title if titleScript fails or is nil
+      command = "curl -s wttr.in?0",
+      fallback = "Weather unavailable",
+      titleScript = "echo '🌤 Weather'",
+      titleFallback = "Weather",
       interval = 300,                     -- auto-refresh seconds; 0 = no refresh
-      font = "JetBrains Mono 12",        -- monospace font (CSS)
+      contentFont = "JetBrainsMono Nerd Font Mono",
+      contentFontSize = 11,
+      tabTitleFont = "sans-serif",
+      tabTitleFontSize = 12,
     },
     -- more tabs...
   },
@@ -44,18 +49,24 @@ return {
 | `titleScript` | string \| nil | no | Shell command for tab label. `nil` = skip, use `titleFallback`. |
 | `titleFallback` | string | no | Tab label if `titleScript` is nil or fails. Default `"Tab N"`. |
 | `interval` | number | no | Auto-refresh in seconds. `0` = fetch once, no refresh. |
-| `font` | string | no | CSS font. Applied as `font-family: monospace; font-size: Npt`. |
+| `contentFont` | string | no | Font for tab content area. Default `"JetBrainsMono Nerd Font Mono"`. |
+| `contentFontSize` | number | no | Content font size in pt. Default `12`. |
+| `tabTitleFont` | string | no | Font for tab labels. Default `"sans-serif"`. |
+| `tabTitleFontSize` | number | no | Tab label font size in pt. Default `12`. |
 
 ### Behavior
 
 - `command` and `titleScript`: if nil, not called at all — fallback used directly.
+- Tabs are lazy-loaded: content is fetched only when a tab is first viewed.
 - On auto-refresh, both content and tab title update.
 - Window size defaults to 720×480 (or first tab's `width`/`height`).
+- Content font CSS fallback chain: `[contentFont] → Noto Color Emoji → monospace`
+- Tab title font CSS fallback chain: `[tabTitleFont] → Noto Color Emoji → emoji`
 
 ## Project structure
 
 ```
-LGIwindow/
+luci-sixsixsix-wm-gtkwindow/
 ├── main.lua           # Entry point — sets up local LGI paths, creates GTK app
 ├── config.lua         # Default config (3 tabs: weather, BTC, system info)
 ├── lgi.lua            # LGI loader (entry point for require("lgi"))
@@ -64,11 +75,11 @@ LGIwindow/
 │   ├── *.lua             # Core LGI modules
 │   └── override/         # GTK/GLib/GObject overrides
 ├── pkg/
-│   ├── lua-lgi-patched/  # Arch PKGBUILD (if you want system install)
+│   ├── lua-lgi-patched/  # Arch PKGBUILD (if you want system-wide LGI install)
 │   │   ├── PKGBUILD
 │   │   ├── lua55-const-loop-var.patch
 │   │   └── glib287-enum-iteration.patch
-│   └── lgiwindow/        # Arch PKGBUILD for the app
+│   └── luci-sixsixsix-wm-gtkwindow/  # Arch PKGBUILD for this app
 │       └── PKGBUILD
 └── README.md
 ```

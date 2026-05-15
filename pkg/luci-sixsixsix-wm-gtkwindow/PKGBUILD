@@ -1,0 +1,20 @@
+# Maintainer: Luci <luci@sixsixsix>
+# Build: makepkg -sf
+# Install: pacman -U luci-sixsixsix-wm-gtkwindow-*.pkg.tar.zst
+
+pkgname=luci-sixsixsix-wm-gtkwindow
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Lucifer GTK Window — tabbed GTK3 window rendering CLI command output in monospace"
+arch=(any)
+url="https://github.com/luvcie/luci-sixsixsix-wm-gtkwindow"
+license=(MIT)
+depends=(lua lua-lgi-patched gtk3 curl)
+source=("main.lua"
+        "config.lua")
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/main.lua" "$pkgdir/usr/bin/luci-sixsixsix-wm-gtkwindow"
+  install -Dm644 "$srcdir/config.lua" "$pkgdir/etc/luci-sixsixsix-wm-gtkwindow/config.lua"
+}
