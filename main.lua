@@ -17,7 +17,7 @@ if not this_dir:find("^/") then
   this_dir = cwd .. "/" .. this_dir
 end
 
-package.path = this_dir .. "lgi/?.lua;" .. package.path
+package.path = this_dir .. "?.lua;" .. this_dir .. "lgi/?.lua;" .. package.path
 package.cpath = this_dir .. "lgi/?.so;" .. package.cpath
 
 local lgi = require("lgi")
