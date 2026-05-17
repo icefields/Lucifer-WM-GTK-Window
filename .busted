@@ -1,0 +1,10 @@
+return {
+  default = {
+    paths = {
+      "tests/"
+    },
+    patterns = {
+      "test_%.lua$"
+    }
+  }
+}

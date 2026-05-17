@@ -13,7 +13,9 @@ if not this_dir then
 end
 -- Make absolute
 if not this_dir:find("^/") then
-  local cwd = io.popen("pwd"):read("*a"):gsub("\n$", "")
+  local h = io.popen("pwd")
+  local cwd = h:read("*a"):gsub("\n$", "")
+  h:close()
   this_dir = cwd .. "/" .. this_dir
 end
 
@@ -24,46 +26,20 @@ local lgi = require("lgi")
 local Gtk = lgi.require("Gtk", "3.0")
 local GLib = lgi.require("GLib", "2.0")
 local Pango = lgi.require("Pango", "1.0")
+local ansi2pango = require("ansi2pango")
+local logic = require("logic")
 
 -- Config search: 1) CLI arg, 2) XDG config dir, 3) same dir as script
-local function findConfig()
-  if arg[1] then return arg[1] end
-  local xdg = os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")
-  local xdgPath = xdg .. "/luci-sixsixsix-wm-gtkwindow/config.lua"
-  local f = io.open(xdgPath, "r")
-  if f then f:close(); return xdgPath end
-  return this_dir .. "config.lua"
-end
-local configPath = findConfig()
-local config = dofile(configPath)
+local configPath = logic.findConfig(arg[1], os.getenv("XDG_CONFIG_HOME"), os.getenv("HOME"), this_dir)
+local config = logic.loadConfig(configPath)
 
 local tabs = config.tabs or {}
 local winTitle = config.title or "Lucifer GTK Window"
 local winWidth = tabs[1] and tabs[1].width or 720
 local winHeight = tabs[1] and tabs[1].height or 480
 
--- Run a shell command; returns nil if cmd is nil or on failure
-local function runCommand(cmd)
-  if not cmd then return nil end
-  local handle = io.popen(cmd .. " 2>&1")
-  if not handle then return nil end
-  local result = handle:read("*a")
-  handle:close()
-  if result and result ~= "" then
-    return result:gsub("\n$", "")
-  end
-  return nil
-end
-
--- Run command or return fallback
-local function runOrFallback(cmd, fallback)
-  local result = runCommand(cmd)
-  if result then return result end
-  return fallback or "N/A"
-end
-
 -- Track which tabs have been loaded
-local loaded = {}
+local loadTracker = logic.createLoadTracker()
 
 -- Widget references (indexed by tab number)
 local tabLabels = {}
@@ -71,11 +47,11 @@ local contentLabels = {}
 
 -- Fetch content and title for a tab, update the labels
 local function loadTab(i)
-  if loaded[i] then return end
-  loaded[i] = true
+  if loadTracker.isLoaded(i) then return end
+  loadTracker.markLoaded(i)
   local tab = tabs[i]
-  contentLabels[i]:set_text(runOrFallback(tab.command, tab.fallback or "N/A"))
-  tabLabels[i]:set_text(runOrFallback(tab.titleScript, tab.titleFallback or ("Tab " .. i)))
+  contentLabels[i]:set_markup(ansi2pango.convert(logic.runOrFallback(tab.command, tab.fallback or "N/A")))
+  tabLabels[i]:set_text(logic.runOrFallback(tab.titleScript, tab.titleFallback or ("Tab " .. i)))
 end
 
 -- Create the application
@@ -125,7 +101,7 @@ function App:on_activate()
 
     -- Emoji font fallback for tab labels
     local tabCss = Gtk.CssProvider()
-    local tabCssText = "label { font-family: '" .. tabTitleFont .. "', 'Noto Color Emoji', emoji; font-size: " .. tabTitleFontSize .. "pt; }"
+    local tabCssText = "label { font-family: '" .. tabTitleFont:gsub("'", "\\'") .. "', 'Noto Color Emoji', emoji; font-size: " .. tabTitleFontSize .. "pt; }"
     tabCss:load_from_data(tabCssText, #tabCssText)
     tabLabel:get_style_context():add_provider(tabCss, 600)
 
@@ -146,9 +122,9 @@ function App:on_activate()
     })
     contentLabels[i] = contentLabel
 
-    -- Per-label CSS: use Nerd Font Mono for symbols, Noto Color Emoji for emoji
+    -- Per-label CSS for monospace font
     local cssProvider = Gtk.CssProvider()
-    local css = "label { font-family: '" .. contentFont .. "', 'Noto Color Emoji', monospace; font-size: " .. contentFontSize .. "pt; }"
+    local css = "label { font-family: '" .. contentFont:gsub("'", "\\'") .. "', 'Noto Color Emoji', monospace; font-size: " .. contentFontSize .. "pt; }"
     cssProvider:load_from_data(css, #css)
     contentLabel:get_style_context():add_provider(cssProvider, 600)
 
@@ -164,9 +140,9 @@ function App:on_activate()
     -- Auto-refresh (starts after first load)
     if interval > 0 then
       GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, interval, function()
-        if not loaded[i] then return true end
-        contentLabel:set_text(runOrFallback(tab.command, tab.fallback or "N/A"))
-        tabLabel:set_text(runOrFallback(tab.titleScript, titleFallback))
+        if not loadTracker.isLoaded(i) then return true end
+        contentLabel:set_markup(ansi2pango.convert(logic.runOrFallback(tab.command, tab.fallback or "N/A")))
+        tabLabel:set_text(logic.runOrFallback(tab.titleScript, titleFallback))
         return true
       end)
     end
@@ -181,7 +157,7 @@ function App:on_activate()
 
   function notebook:on_switch_page(page, page_num)
     local i = page_num + 1
-    if tabs[i] and not loaded[i] then
+    if tabs[i] and not loadTracker.isLoaded(i) then
       loadTab(i)
     end
   end
