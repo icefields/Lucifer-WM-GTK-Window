@@ -83,6 +83,7 @@ return {
           titleScript = "echo '💾 Memory'",
           titleFallback = "Memory",
           interval = 10,
+          contentFontSize = 13,
         },
       },
     },

@@ -118,6 +118,10 @@ local function loadContent(loadId, entry, contentLabel)
   if contentLoaded[loadId] then return end
   contentLoaded[loadId] = true
   contentLabel:set_markup(ansi2pango.convert(logic.runOrFallback(entry.command, getVal(entry, "fallback"))))
+  -- Deselect text — set_markup on a selectable label auto-selects all
+  if contentLabel.select_region then
+    contentLabel:select_region(0, 0)
+  end
 end
 
 local function setupRefresh(loadId, entry, contentLabel, tabLabel)
