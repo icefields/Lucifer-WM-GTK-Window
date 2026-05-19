@@ -34,28 +34,38 @@ local function escape(text)
   return (text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub("'", "&apos;"))
 end
 
---- Find the matching 'm' terminator for an ANSI escape sequence
--- The 'm' must be preceded only by digits and semicolons.
--- This prevents false matches on 'm' appearing inside numeric params
--- (e.g., \e[38;2;109;0;0m — the 109 contains no 'm' as char, but
---  searching for "m" with plain=true would match correctly here anyway
---  since 'm' as a byte can't appear in the digit/semicolon param region).
--- However, to be safe and handle edge cases, we find the first 'm' after
--- ESC[ and validate that everything between is valid param chars.
-local function findMTerminator(text, startPos)
-  -- startPos points to the character after ESC[
-  -- We look for the first 'm' where the intervening chars are [0-9;]
+--- Find the terminator for a CSI escape sequence
+-- CSI sequences end with a byte in the range 0x40-0x7E (@A–Z[\]^_`a–z{|}~)
+-- For SGR (color) sequences, the terminator is 'm'.
+-- For cursor movement (A/B/C/D/G/H/f/s/u/J/K/L/M/S/T/h/l/r), we strip them.
+-- Returns: terminatorChar, endPos (position after the terminator), paramStr
+-- Returns nil if no valid terminator found.
+local function findCSITerminator(text, startPos)
   local pos = startPos
+  -- Skip intermediate bytes (0x20-0x2F)
   while pos <= #text do
-    local mPos = text:find("m", pos, true)
-    if not mPos then return nil end
-    -- Validate: everything from startPos to mPos-1 must be digits/semicolons
-    local paramStr = text:sub(startPos, mPos - 1)
-    if paramStr:match("^[0-9;]*$") then
-      return mPos
+    local b = text:byte(pos)
+    if b >= 0x20 and b <= 0x2F then
+      pos = pos + 1
+    else
+      break
     end
-    -- Not a valid CSI sequence, skip past this 'm' and keep looking
-    pos = mPos + 1
+  end
+  local paramStart = pos
+  -- Allow leading '?' (private mode markers like [?25h, [?1049h)
+  if pos <= #text and text:byte(pos) == 0x3F then
+    pos = pos + 1
+  end
+  while pos <= #text do
+    local b = text:byte(pos)
+    if (b >= 0x30 and b <= 0x39) or b == 0x3B then
+      pos = pos + 1
+    elseif b >= 0x40 and b <= 0x7E then
+      local paramStr = text:sub(paramStart, pos - 1)
+      return string.char(b), pos + 1, paramStr
+    else
+      return nil
+    end
   end
   return nil
 end
@@ -107,7 +117,7 @@ function M.convert(text)
   end
 
   while pos <= #text do
-    local escPos = text:find("\27[", pos, true)
+    local escPos = text:find("\27", pos, true)
     if not escPos then
       emit(text:sub(pos))
       break
@@ -117,20 +127,23 @@ function M.convert(text)
       emit(text:sub(pos, escPos - 1))
     end
 
-    -- Find the 'm' terminator for this CSI sequence
-    local mPos = findMTerminator(text, escPos + 2)
-    if not mPos then
-      -- Malformed: no terminating 'm', emit the ESC as plain text
-      emit(text:sub(escPos))
-      break
-    end
+    local nextByte = text:byte(escPos + 1)
 
-    local paramStr = text:sub(escPos + 2, mPos - 1)
-    pos = mPos + 1
+    if nextByte == 0x5B then
+      -- CSI sequence (\e[...)
+      local termChar, endPos, paramStr = findCSITerminator(text, escPos + 2)
+      if not termChar then
+        emit(text:sub(escPos))
+        break
+      end
+      pos = endPos
+      if termChar ~= "m" then
+        goto continue
+      end
 
-    -- Parse params
-    local nums = {}
-    for s in paramStr:gmatch("[^;]+") do
+      -- Parse params (SGR only — we only reach here for 'm' terminator)
+      local nums = {}
+      for s in paramStr:gmatch("[^;]+") do
       local n = tonumber(s)
       if n then nums[#nums + 1] = n end
     end
@@ -202,6 +215,32 @@ function M.convert(text)
 
       i = i + 1
     end
+
+    elseif nextByte == 0x5D then
+      -- OSC sequence (\e]...BEL or \e]...\e\\)
+      -- Find terminator: BEL (0x07) or ST (\e\\)
+      local oscPos = escPos + 2
+      while oscPos <= #text do
+        local b = text:byte(oscPos)
+        if b == 0x07 then
+          pos = oscPos + 1
+          break
+        elseif b == 0x1B and text:byte(oscPos + 1) == 0x5C then
+          pos = oscPos + 2
+          break
+        end
+        oscPos = oscPos + 1
+      end
+      if oscPos > #text then
+        -- Malformed OSC, skip to end
+        break
+      end
+    else
+      -- Other escape sequences (\e(B, \e)>, etc.) — skip 1-2 chars
+      pos = escPos + 2
+    end
+
+    ::continue::
   end
 
   return table.concat(result)
