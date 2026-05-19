@@ -138,65 +138,6 @@ describe("logic", function()
     end)
   end)
 
-  describe("createLoadTracker()", function()
-    it("starts with all tabs unloaded", function()
-      local tracker = logic.createLoadTracker()
-      assert.falsy(tracker.isLoaded(1))
-      assert.falsy(tracker.isLoaded(2))
-      assert.falsy(tracker.isLoaded(3))
-    end)
-
-    it("marks tabs as loaded", function()
-      local tracker = logic.createLoadTracker()
-      tracker.markLoaded(1)
-      assert.truthy(tracker.isLoaded(1))
-      assert.falsy(tracker.isLoaded(2))
-    end)
-
-    it("loads all tabs sequentially", function()
-      local tracker = logic.createLoadTracker()
-      for i = 1, 5 do
-        tracker.markLoaded(i)
-        assert.truthy(tracker.isLoaded(i))
-      end
-    end)
-
-    it("does not reload already loaded tabs", function()
-      local tracker = logic.createLoadTracker()
-      tracker.markLoaded(1)
-      tracker.markLoaded(1)
-      assert.truthy(tracker.isLoaded(1))
-    end)
-
-    it("reset clears all loaded state", function()
-      local tracker = logic.createLoadTracker()
-      tracker.markLoaded(1)
-      tracker.markLoaded(2)
-      tracker.markLoaded(3)
-      assert.are.equal(3, tracker.count())
-      tracker.reset()
-      assert.are.equal(0, tracker.count())
-      assert.falsy(tracker.isLoaded(1))
-      assert.falsy(tracker.isLoaded(2))
-    end)
-
-    it("count returns number of loaded tabs", function()
-      local tracker = logic.createLoadTracker()
-      assert.are.equal(0, tracker.count())
-      tracker.markLoaded(1)
-      assert.are.equal(1, tracker.count())
-      tracker.markLoaded(3)
-      assert.are.equal(2, tracker.count())
-    end)
-
-    it("handles large tab indices", function()
-      local tracker = logic.createLoadTracker()
-      tracker.markLoaded(1000)
-      assert.truthy(tracker.isLoaded(1000))
-      assert.falsy(tracker.isLoaded(999))
-    end)
-  end)
-
   describe("validateConfig()", function()
     it("accepts valid config", function()
       local config = {
@@ -290,29 +231,6 @@ describe("logic", function()
     end)
   end)
 
-  describe("resolveScriptDir()", function()
-    it("extracts directory from @path source", function()
-      local dir = logic.resolveScriptDir("@/home/user/scripts/main.lua", nil)
-      assert.are.equal("/home/user/scripts/", dir)
-    end)
-
-    it("falls back to arg[0] when no @ prefix", function()
-      local dir = logic.resolveScriptDir("no-at-prefix", "/opt/app/main.lua")
-      assert.truthy(dir)
-    end)
-
-    it("defaults to ./ when no source or arg[0]", function()
-      local dir = logic.resolveScriptDir("no-at", nil)
-      assert.truthy(dir)
-    end)
-
-    it("makes relative paths absolute", function()
-      local dir = logic.resolveScriptDir("@./scripts/main.lua", nil)
-      -- Should start with /
-      assert.truthy(dir:match("^/"))
-    end)
-  end)
-
   describe("loadConfig()", function()
     it("loads a valid config file", function()
       local tmp = os.tmpname()
@@ -336,76 +254,7 @@ describe("logic", function()
   end)
 end)
 
-describe("integration: lazy loading simulation", function()
-  it("first tab loads immediately, others only on demand", function()
-    local tracker = logic.createLoadTracker()
-    local loadOrder = {}
-
-    local function simulateLoad(i)
-      if tracker.isLoaded(i) then return end
-      tracker.markLoaded(i)
-      loadOrder[#loadOrder + 1] = i
-    end
-
-    simulateLoad(1)
-    assert.are.equal(1, #loadOrder)
-    assert.are.equal(1, loadOrder[1])
-
-    assert.falsy(tracker.isLoaded(2))
-    assert.falsy(tracker.isLoaded(3))
-
-    simulateLoad(3)
-    assert.are.equal(2, #loadOrder)
-    assert.are.equal(3, loadOrder[2])
-
-    simulateLoad(1)
-    assert.are.equal(2, #loadOrder)
-  end)
-
-  it("simulate GTK notebook switch_page callback", function()
-    local tracker = logic.createLoadTracker()
-    local tabs = { {cmd="a"}, {cmd="b"}, {cmd="c"}, {cmd="d"} }
-
-    local function onPageSwitch(pageNum)
-      local i = pageNum + 1
-      if tabs[i] and not tracker.isLoaded(i) then
-        tracker.markLoaded(i)
-      end
-    end
-
-    tracker.markLoaded(1)
-
-    onPageSwitch(1)
-    assert.truthy(tracker.isLoaded(2))
-
-    onPageSwitch(0)
-    assert.truthy(tracker.isLoaded(1))
-  end)
-end)
-
 describe("memory and resource safety", function()
-  it("loadTracker does not accumulate duplicate entries", function()
-    local tracker = logic.createLoadTracker()
-    for _ = 1, 100 do
-      tracker.markLoaded(1)
-    end
-    assert.are.equal(1, tracker.count())
-    assert.truthy(tracker.isLoaded(1))
-  end)
-
-  it("loadTracker reset frees all references", function()
-    local tracker = logic.createLoadTracker()
-    for i = 1, 50 do
-      tracker.markLoaded(i)
-    end
-    assert.are.equal(50, tracker.count())
-    tracker.reset()
-    assert.are.equal(0, tracker.count())
-    for i = 1, 50 do
-      assert.falsy(tracker.isLoaded(i))
-    end
-  end)
-
   it("ansi2pango does not accumulate state across calls", function()
     local ansi2pango = require("ansi2pango")
     local ESC = string.char(27)
@@ -436,17 +285,14 @@ describe("memory and resource safety", function()
   end)
 
   it("runCommand pcall prevents crashes on bad handles", function()
-    -- This should not crash even with unusual commands
     local result = logic.runCommand("cat /dev/null")
     assert.is_true(result == nil or type(result) == "string")
   end)
 
   it("no file handle leaks in runCommand", function()
-    -- Run many commands to check for handle leaks
     for _ = 1, 100 do
       logic.runCommand("echo test")
     end
-    -- If we got here without running out of file descriptors, we're fine
     assert.is_true(true)
   end)
 end)
@@ -456,18 +302,13 @@ describe("security", function()
   local ESC = string.char(27)
 
   it("runCommand does not allow command injection via config", function()
-    -- This test documents that runCommand passes cmd directly to shell
-    -- Config should be trusted (not user input from network)
     local result = logic.runCommand("echo safe")
     assert.are.equal("safe", result)
   end)
 
   it("ansi2pango output does not inject Pango markup from ANSI text", function()
-    -- ANSI text should not be able to inject arbitrary Pango tags
-    -- Only span tags with known attributes should appear
     local input = 'normal <b>bold</b> text'
     local result = ansi2pango.convert(input)
-    -- <b> should be escaped to &lt;b&gt;
     assert.truthy(result:match("&lt;b&gt;"))
     assert.falsy(result:match("<b>"))
   end)
@@ -480,50 +321,12 @@ describe("security", function()
   end)
 end)
 
-describe("loadTracker reset() closure bug", function()
-  it("reset() actually clears loaded state (not just reassigns local)", function()
-    local tracker = logic.createLoadTracker()
-    tracker.markLoaded(1)
-    tracker.markLoaded(2)
-    tracker.markLoaded(3)
-    assert.are.equal(3, tracker.count())
-    assert.truthy(tracker.isLoaded(1))
-    assert.truthy(tracker.isLoaded(2))
-    assert.truthy(tracker.isLoaded(3))
-
-    tracker.reset()
-    assert.are.equal(0, tracker.count())
-    assert.falsy(tracker.isLoaded(1))
-    assert.falsy(tracker.isLoaded(2))
-    assert.falsy(tracker.isLoaded(3))
-  end)
-
-  it("reset() followed by markLoaded works correctly", function()
-    local tracker = logic.createLoadTracker()
-    tracker.markLoaded(1)
-    tracker.reset()
-    tracker.markLoaded(2)
-    assert.falsy(tracker.isLoaded(1))
-    assert.truthy(tracker.isLoaded(2))
-    assert.are.equal(1, tracker.count())
-  end)
-end)
-
 describe("io.popen handle leaks", function()
   it("runCommand always closes the handle", function()
-    -- If handles leak, FDs would be exhausted
     for i = 1, 200 do
       local result = logic.runCommand("echo test" .. i)
       assert.are.equal("test" .. i, result)
     end
-  end)
-
-  it("resolveScriptDir closes its pwd handle", function()
-    for _ = 1, 50 do
-      logic.resolveScriptDir("@./test.lua", nil)
-    end
-    -- No crash = no FD leak
-    assert.is_true(true)
   end)
 end)
 
@@ -701,6 +504,41 @@ describe("flattenTabs()", function()
     assert.are.equal(2, #cn[1].children)
     assert.are.equal(3, #cn[2].children)
   end)
+
+  it("treats empty children array as leaf", function()
+    local tabs = {
+      { command = "echo hi", children = {} },
+    }
+    local flat, cn = logic.flattenTabs(tabs)
+    assert.are.equal(1, #flat)
+    assert.are.equal("leaf", flat[1].type)
+    assert.are.equal("echo hi", flat[1].command)
+    assert.are.equal(0, #cn)
+  end)
+
+  it("preserves interval in child entries", function()
+    local tabs = {
+      {
+        titleFallback = "Group",
+        interval = 60,
+        children = {
+          { command = "echo a", interval = 120 },
+          { command = "echo b" },
+        },
+      },
+    }
+    local flat, cn = logic.flattenTabs(tabs)
+    assert.are.equal(120, cn[1].children[1].interval)
+    assert.are.equal(60, cn[1].children[2].interval)  -- inherited from parent
+  end)
+
+  it("does not set childNotebookIdx on leaf entries", function()
+    local tabs = {
+      { command = "echo hi", titleFallback = "Hi" },
+    }
+    local flat, cn = logic.flattenTabs(tabs)
+    assert.is_nil(flat[1].childNotebookIdx)
+  end)
 end)
 
 describe("mergeDefaults()", function()
@@ -738,5 +576,22 @@ describe("mergeDefaults()", function()
     assert.is_nil(merged.fallback)
     assert.is_nil(merged.titleScript)
     assert.is_nil(merged.titleFallback)
+  end)
+
+  it("child with explicit nil value does not override parent", function()
+    -- pairs() skips nil values, so child.contentFont = nil is not iterated
+    -- This test documents the behavior
+    local parent = { contentFont = "Mono", contentFontSize = 12 }
+    local child = { command = "echo test" }
+    local merged = logic.mergeDefaults(child, parent)
+    assert.are.equal("Mono", merged.contentFont)
+  end)
+
+  it("deeply nested tables in child are preserved by reference", function()
+    local parent = { contentFont = "Mono" }
+    local child = { command = "echo test", extra = { a = 1, b = 2 } }
+    local merged = logic.mergeDefaults(child, parent)
+    assert.are.equal(1, merged.extra.a)
+    assert.are.equal(2, merged.extra.b)
   end)
 end)

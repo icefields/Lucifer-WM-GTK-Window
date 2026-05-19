@@ -43,9 +43,9 @@ end
 --- Flatten a nested tab config into a linear list of display entries.
 -- Each entry is one of:
 --   { type = "leaf", command = ..., titleScript = ..., ... }
---   { type = "group", titleScript = ..., titleFallback = ..., childNotebook = <index> }
--- Groups with a single child are inlined (no child notebook).
--- Returns: flat list, child_notebooks (list of { parent_index, child_entries })
+--   { type = "group", titleScript = ..., titleFallback = ..., childNotebookIdx = N }
+-- Groups with a single child are inlined as leaf entries.
+-- Returns: flat list, childNotebooks (list of { children = [...] })
 function M.flattenTabs(tabs)
   local flat = {}
   local childNotebooks = {}
@@ -53,12 +53,10 @@ function M.flattenTabs(tabs)
   for i, tab in ipairs(tabs) do
     if tab.children and #tab.children > 0 then
       if #tab.children == 1 then
-        -- Single child: inline it, inheriting parent defaults
         local child = M.mergeDefaults(tab.children[1], tab)
         child.type = "leaf"
         flat[#flat + 1] = child
       else
-        -- Multiple children: create a group entry
         local groupEntry = {
           type = "group",
           titleScript = tab.titleScript,
@@ -70,9 +68,7 @@ function M.flattenTabs(tabs)
           interval = tab.interval,
         }
         flat[#flat + 1] = groupEntry
-        local parentIdx = #flat
 
-        -- Flatten children, inheriting parent defaults
         local childEntries = {}
         for j, child in ipairs(tab.children) do
           local entry = M.mergeDefaults(child, tab)
@@ -80,14 +76,10 @@ function M.flattenTabs(tabs)
           childEntries[#childEntries + 1] = entry
         end
 
-        childNotebooks[#childNotebooks + 1] = {
-          parentIndex = parentIdx,
-          children = childEntries,
-        }
+        childNotebooks[#childNotebooks + 1] = { children = childEntries }
         groupEntry.childNotebookIdx = #childNotebooks
       end
     else
-      -- Leaf tab (no children)
       local entry = {}
       for k, v in pairs(tab) do entry[k] = v end
       entry.type = "leaf"
@@ -100,6 +92,7 @@ end
 
 --- Merge child config with parent defaults.
 -- Child values take priority; parent provides fallbacks.
+-- Excludes: children, command, fallback, titleScript, titleFallback
 function M.mergeDefaults(child, parent)
   local merged = {}
   for k, v in pairs(parent) do
@@ -112,21 +105,6 @@ function M.mergeDefaults(child, parent)
     merged[k] = v
   end
   return merged
-end
-
--- Lazy-load tracker
-function M.createLoadTracker()
-  local loaded = {}
-  return {
-    isLoaded = function(i) return loaded[i] == true end,
-    markLoaded = function(i) loaded[i] = true end,
-    reset = function() for k in pairs(loaded) do loaded[k] = nil end end,
-    count = function()
-      local n = 0
-      for _ in pairs(loaded) do n = n + 1 end
-      return n
-    end,
-  }
 end
 
 -- Validate config structure
@@ -164,21 +142,6 @@ function M.validateConfig(config)
     end
   end
   return true
-end
-
--- Resolve script directory (testable version)
-function M.resolveScriptDir(source, arg0)
-  local dir = source:match("^@(.*/)")
-  if not dir then
-    dir = arg0 and arg0:match("^(.*/)") or "./"
-  end
-  if not dir:find("^/") then
-    local handle = io.popen("pwd")
-    local cwd = handle:read("*a"):gsub("\n$", "")
-    handle:close()
-    dir = cwd .. "/" .. dir
-  end
-  return dir
 end
 
 return M

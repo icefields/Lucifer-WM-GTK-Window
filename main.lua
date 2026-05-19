@@ -66,6 +66,8 @@ local contentLoaded = {}
 -- Widget references: loadId -> { contentLabel, tabLabel, entry }
 local widgets = {}
 
+local nextLoadId = 0
+
 local function createContentLabel(entry)
   local font = getVal(entry, "contentFont")
   local size = getVal(entry, "contentFontSize")
@@ -132,14 +134,9 @@ local function setupRefresh(loadId, entry, contentLabel, tabLabel)
   end)
 end
 
-local nextLoadId = 0
-local function assignLoadId()
-  nextLoadId = nextLoadId + 1
-  return nextLoadId
-end
-
 local function buildLeaf(entry)
-  local loadId = assignLoadId()
+  nextLoadId = nextLoadId + 1
+  local loadId = nextLoadId
   local tabLabel = createTabLabel(entry)
   local contentLabel = createContentLabel(entry)
   widgets[loadId] = { contentLabel = contentLabel, tabLabel = tabLabel, entry = entry }
@@ -175,9 +172,11 @@ function App:on_activate()
     tab_pos = Gtk.PositionType.TOP,
   })
 
+  -- loadId tracking: main tab index -> loadId (nil for groups)
   local mainLoadIds = {}
+  -- cnIdx -> { j -> loadId }
   local childLoadIds = {}
-  local childNotebookWidgets = {}
+  -- loadId of first visible leaf (loaded immediately)
   local firstLoadId = nil
 
   for i, entry in ipairs(flatTabs) do
@@ -191,7 +190,6 @@ function App:on_activate()
         scrollable = true,
         tab_pos = Gtk.PositionType.TOP,
       })
-      childNotebookWidgets[cnIdx] = childNotebook
 
       childLoadIds[cnIdx] = {}
 
@@ -203,11 +201,13 @@ function App:on_activate()
         if not firstLoadId then firstLoadId = loadId end
       end
 
+      -- Load first child content immediately
       if #cnData.children > 0 then
         loadContent(childLoadIds[cnIdx][1], cnData.children[1],
                     widgets[childLoadIds[cnIdx][1]].contentLabel)
       end
 
+      -- Child notebook lazy-load handler
       do local cn = cnData
         function childNotebook:on_switch_page(page, page_num)
           local j = page_num + 1
@@ -222,9 +222,9 @@ function App:on_activate()
       local groupTabLabel = createTabLabel(entry)
       loadTitle(entry, groupTabLabel)
       mainNotebook:append_page(childNotebook, groupTabLabel)
-      mainLoadIds[i] = nil
 
     else
+      -- Leaf tab
       local loadId, tabLabel, contentLabel = buildLeaf(entry)
       mainLoadIds[i] = loadId
       setupRefresh(loadId, entry, contentLabel, tabLabel)
@@ -233,10 +233,12 @@ function App:on_activate()
     end
   end
 
+  -- Load first visible tab content
   if firstLoadId then
     loadContent(firstLoadId, widgets[firstLoadId].entry, widgets[firstLoadId].contentLabel)
   end
 
+  -- Main notebook lazy-load handler
   function mainNotebook:on_switch_page(page, page_num)
     local i = page_num + 1
     local entry = flatTabs[i]
