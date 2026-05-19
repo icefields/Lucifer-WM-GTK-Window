@@ -118,13 +118,10 @@ local function loadContent(loadId, entry, contentLabel)
   if contentLoaded[loadId] then return end
   contentLoaded[loadId] = true
   contentLabel:set_markup(ansi2pango.convert(logic.runOrFallback(entry.command, getVal(entry, "fallback"))))
-  -- Defer deselect — GTK selects all text after set_markup on a selectable label,
-  -- but only after the current event cycle. Idle callback runs after layout.
+  -- GTK selects all text on set_markup for selectable labels; deselect after layout
   GLib.idle_add(GLib.PRIORITY_HIGH_IDLE, function()
-    if contentLabel.select_region then
-      contentLabel:select_region(-1, -1)
-    end
-    return false  -- one-shot
+    contentLabel:select_region(-1, -1)
+    return false
   end)
 end
 
@@ -185,10 +182,10 @@ function App:on_activate()
     tab_pos = Gtk.PositionType.TOP,
   })
 
-  -- Track loadId for each top-level tab and each child tab
-  local mainLoadIds = {}      -- main tab index -> loadId or nil (for groups)
-  local childLoadIds = {}     -- cnIdx -> { j -> loadId }
-  local firstLoadId = nil     -- loadId of first visible leaf
+  local mainLoadIds = {}         -- flat index -> loadId (nil for groups)
+  local childLoadIds = {}        -- cnIdx -> { j -> loadId }
+  local childNotebookWidgets = {} -- cnIdx -> Gtk.Notebook widget
+  local firstLoadId = nil
 
   for i, entry in ipairs(flatTabs) do
     if entry.type == "group" then
@@ -201,6 +198,7 @@ function App:on_activate()
         scrollable = true,
         tab_pos = Gtk.PositionType.TOP,
       })
+      childNotebookWidgets[cnIdx] = childNotebook
 
       childLoadIds[cnIdx] = {}
 
@@ -209,7 +207,6 @@ function App:on_activate()
         childLoadIds[cnIdx][j] = loadId
         setupRefresh(loadId, childEntry, childContentLabel, childTabLabel)
         childNotebook:append_page(wrapScrolled(childContentLabel), childTabLabel)
-
         if not firstLoadId then firstLoadId = loadId end
       end
 
@@ -220,30 +217,27 @@ function App:on_activate()
       end
 
       -- Child notebook switch handler
-      do local cn = cnData  -- capture for closure
+      do local cn = cnData
         function childNotebook:on_switch_page(page, page_num)
           local j = page_num + 1
           local childEntry = cn.children[j]
-          if childEntry then
+          if childEntry and childLoadIds[cnIdx][j] then
             loadContent(childLoadIds[cnIdx][j], childEntry,
                         widgets[childLoadIds[cnIdx][j]].contentLabel)
           end
         end
       end
 
-      -- Group tab label in main notebook
       local groupTabLabel = createTabLabel(entry)
       loadTitle(entry, groupTabLabel)
       mainNotebook:append_page(childNotebook, groupTabLabel)
-      mainLoadIds[i] = nil  -- group tabs don't have their own loadId
+      mainLoadIds[i] = nil
 
     else
-      -- Leaf tab
       local loadId, tabLabel, contentLabel = buildLeaf(entry)
       mainLoadIds[i] = loadId
       setupRefresh(loadId, entry, contentLabel, tabLabel)
       mainNotebook:append_page(wrapScrolled(contentLabel), tabLabel)
-
       if not firstLoadId then firstLoadId = loadId end
     end
   end
@@ -253,15 +247,34 @@ function App:on_activate()
     loadContent(firstLoadId, widgets[firstLoadId].entry, widgets[firstLoadId].contentLabel)
   end
 
-  -- Main notebook switch handler
+  -- Main notebook switch handler — also deselect content on switch
   function mainNotebook:on_switch_page(page, page_num)
     local i = page_num + 1
     local entry = flatTabs[i]
     if not entry then return end
     if entry.type == "leaf" and mainLoadIds[i] then
       loadContent(mainLoadIds[i], entry, widgets[mainLoadIds[i]].contentLabel)
+      -- Deselect after switch (GTK re-selects on page change)
+      GLib.idle_add(GLib.PRIORITY_HIGH_IDLE, function()
+        widgets[mainLoadIds[i]].contentLabel:select_region(-1, -1)
+        return false
+      end)
+    elseif entry.type == "group" then
+      -- Deselect the visible child tab's content
+      local cnIdx = entry.childNotebookIdx
+      local cnWidget = childNotebookWidgets[cnIdx]
+      if cnWidget then
+        local currentChild = cnWidget.page  -- 0-based current page
+        local j = (currentChild or 0) + 1
+        local childLid = childLoadIds[cnIdx][j]
+        if childLid and widgets[childLid] then
+          GLib.idle_add(GLib.PRIORITY_HIGH_IDLE, function()
+            widgets[childLid].contentLabel:select_region(-1, -1)
+            return false
+          end)
+        end
+      end
     end
-    -- Groups: child notebook handles its own lazy loading
   end
 
   window:add(mainNotebook)
