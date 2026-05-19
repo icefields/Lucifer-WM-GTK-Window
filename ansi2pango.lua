@@ -1,6 +1,7 @@
 --- ANSI escape sequence parser → Pango markup
 -- Converts terminal color codes into <span> tags for GTK labels
 -- Supports: 8/16 colors, 256-color, RGB (truecolor), bold, italic, underline, reset
+-- Strips: cursor movement, scroll, erase, private mode, OSC sequences
 
 local M = {}
 
@@ -35,11 +36,9 @@ local function escape(text)
 end
 
 --- Find the terminator for a CSI escape sequence
--- CSI sequences end with a byte in the range 0x40-0x7E (@A–Z[\]^_`a–z{|}~)
--- For SGR (color) sequences, the terminator is 'm'.
--- For cursor movement (A/B/C/D/G/H/f/s/u/J/K/L/M/S/T/h/l/r), we strip them.
--- Returns: terminatorChar, endPos (position after the terminator), paramStr
--- Returns nil if no valid terminator found.
+-- CSI sequences end with a byte in the range 0x40-0x7E
+-- Returns: terminatorChar, endPos (position after terminator), paramStr
+-- Returns nil if no valid terminator found
 local function findCSITerminator(text, startPos)
   local pos = startPos
   -- Skip intermediate bytes (0x20-0x2F)
@@ -52,13 +51,10 @@ local function findCSITerminator(text, startPos)
     end
   end
   local paramStart = pos
-  -- Allow leading '?' (private mode markers like [?25h, [?1049h)
-  if pos <= #text and text:byte(pos) == 0x3F then
-    pos = pos + 1
-  end
   while pos <= #text do
     local b = text:byte(pos)
-    if (b >= 0x30 and b <= 0x39) or b == 0x3B then
+    -- Digits, semicolons, and '?' (private mode) are param chars
+    if (b >= 0x30 and b <= 0x39) or b == 0x3B or b == 0x3F then
       pos = pos + 1
     elseif b >= 0x40 and b <= 0x7E then
       local paramStr = text:sub(paramStart, pos - 1)
@@ -70,20 +66,114 @@ local function findCSITerminator(text, startPos)
   return nil
 end
 
+--- Find the end of an OSC sequence
+-- OSC ends with BEL (0x07) or ST (\e\\)
+-- Returns endPos (position after terminator), or nil if malformed
+local function findOSCEnd(text, startPos)
+  local pos = startPos
+  while pos <= #text do
+    local b = text:byte(pos)
+    if b == 0x07 then
+      return pos + 1
+    elseif b == 0x1B and text:byte(pos + 1) == 0x5C then
+      return pos + 2
+    end
+    pos = pos + 1
+  end
+  return nil
+end
+
+--- Parse SGR parameters and update current attributes
+-- @param paramStr semicolon-separated params (may include leading '?')
+-- @param currentAttrs table of current Pango attributes
+-- @return updated attributes table (new reference on reset, same ref otherwise)
+local function parseSGR(paramStr, currentAttrs)
+  -- Strip leading '?' if present (shouldn't happen for SGR but be safe)
+  paramStr = paramStr:match("^%?(.*)$") or paramStr
+
+  local nums = {}
+  for s in paramStr:gmatch("[^;]+") do
+    local n = tonumber(s)
+    if n then nums[#nums + 1] = n end
+  end
+  if #nums == 0 then nums = {0} end
+
+  local i = 1
+  while i <= #nums do
+    local code = nums[i]
+
+    if code == 0 then
+      currentAttrs = {}
+    elseif code == 1 then
+      currentAttrs["weight"] = "bold"
+    elseif code == 3 then
+      currentAttrs["style"] = "italic"
+    elseif code == 4 then
+      currentAttrs["underline"] = "single"
+    elseif code == 22 then
+      currentAttrs["weight"] = nil
+    elseif code == 23 then
+      currentAttrs["style"] = nil
+    elseif code == 24 then
+      currentAttrs["underline"] = nil
+    elseif code == 38 then
+      local nextCode = nums[i + 1]
+      if nextCode == 5 and nums[i + 2] then
+        local idx = nums[i + 2]
+        if idx >= 0 and idx <= 255 then
+          currentAttrs["foreground"] = color256_table[idx]
+        end
+        i = i + 2
+      elseif nextCode == 2 and nums[i + 2] and nums[i + 3] and nums[i + 4] then
+        local r, g, b = nums[i+2], nums[i+3], nums[i+4]
+        if r >= 0 and r <= 255 and g >= 0 and g <= 255 and b >= 0 and b <= 255 then
+          currentAttrs["foreground"] = string.format("#%02x%02x%02x", r, g, b)
+        end
+        i = i + 4
+      end
+    elseif code == 48 then
+      local nextCode = nums[i + 1]
+      if nextCode == 5 and nums[i + 2] then
+        local idx = nums[i + 2]
+        if idx >= 0 and idx <= 255 then
+          currentAttrs["background"] = color256_table[idx]
+        end
+        i = i + 2
+      elseif nextCode == 2 and nums[i + 2] and nums[i + 3] and nums[i + 4] then
+        local r, g, b = nums[i+2], nums[i+3], nums[i+4]
+        if r >= 0 and r <= 255 and g >= 0 and g <= 255 and b >= 0 and b <= 255 then
+          currentAttrs["background"] = string.format("#%02x%02x%02x", r, g, b)
+        end
+        i = i + 4
+      end
+    elseif code == 39 then
+      currentAttrs["foreground"] = nil
+    elseif code == 49 then
+      currentAttrs["background"] = nil
+    elseif code >= 30 and code <= 37 then
+      currentAttrs["foreground"] = palette[code - 30]
+    elseif code >= 40 and code <= 47 then
+      currentAttrs["background"] = palette[code - 40]
+    elseif code >= 90 and code <= 97 then
+      currentAttrs["foreground"] = palette[code - 90 + 8]
+    elseif code >= 100 and code <= 107 then
+      currentAttrs["background"] = palette[code - 100 + 8]
+    end
+
+    i = i + 1
+  end
+
+  return currentAttrs
+end
+
+local MAX_INPUT = 1024 * 1024 -- 1MB limit
+local ATTR_ORDER = { "weight", "style", "underline", "foreground", "background" }
+
 --- Convert ANSI-colored text to Pango markup
 -- @param text string with ANSI escape sequences
 -- @return Pango markup string
--- Input is truncated at 1MB to prevent unbounded memory growth.
--- Multi-byte UTF-8 is preserved during truncation.
-
-local MAX_INPUT = 1024 * 1024 -- 1MB limit
-
--- Stable attribute order for deterministic Pango output (module-level constant)
-local ATTR_ORDER = { "weight", "style", "underline", "foreground", "background" }
-
 function M.convert(text)
   if #text > MAX_INPUT then
-    -- Truncate but don't split a multi-byte UTF-8 sequence
     local cut = MAX_INPUT
     while cut > 1 and text:byte(cut) >= 0x80 and text:byte(cut) <= 0xBF do
       cut = cut - 1
@@ -95,7 +185,7 @@ function M.convert(text)
   end
 
   local result = {}
-  local currentAttrs = {} -- key=value pairs
+  local currentAttrs = {}
   local pos = 1
 
   local function emit(plain)
@@ -137,110 +227,39 @@ function M.convert(text)
         break
       end
       pos = endPos
-      if termChar ~= "m" then
-        goto continue
+      if termChar == "m" then
+        currentAttrs = parseSGR(paramStr, currentAttrs)
       end
-
-      -- Parse params (SGR only — we only reach here for 'm' terminator)
-      local nums = {}
-      for s in paramStr:gmatch("[^;]+") do
-      local n = tonumber(s)
-      if n then nums[#nums + 1] = n end
-    end
-    if #nums == 0 then nums = {0} end
-
-    local i = 1
-    while i <= #nums do
-      local code = nums[i]
-
-      if code == 0 then
-        currentAttrs = {}
-      elseif code == 1 then
-        currentAttrs["weight"] = "bold"
-      elseif code == 3 then
-        currentAttrs["style"] = "italic"
-      elseif code == 4 then
-        currentAttrs["underline"] = "single"
-      elseif code == 22 then
-        currentAttrs["weight"] = nil
-      elseif code == 23 then
-        currentAttrs["style"] = nil
-      elseif code == 24 then
-        currentAttrs["underline"] = nil
-      elseif code == 38 then
-        -- Extended foreground
-        local nextCode = nums[i + 1]
-        if nextCode == 5 and nums[i + 2] then
-          local idx = nums[i + 2]
-          if idx >= 0 and idx <= 255 then
-            currentAttrs["foreground"] = color256_table[idx]
-          end
-          i = i + 2
-        elseif nextCode == 2 and nums[i + 2] and nums[i + 3] and nums[i + 4] then
-          local r, g, b = nums[i+2], nums[i+3], nums[i+4]
-          if r >= 0 and r <= 255 and g >= 0 and g <= 255 and b >= 0 and b <= 255 then
-            currentAttrs["foreground"] = string.format("#%02x%02x%02x", r, g, b)
-          end
-          i = i + 4
-        end
-      elseif code == 48 then
-        -- Extended background
-        local nextCode = nums[i + 1]
-        if nextCode == 5 and nums[i + 2] then
-          local idx = nums[i + 2]
-          if idx >= 0 and idx <= 255 then
-            currentAttrs["background"] = color256_table[idx]
-          end
-          i = i + 2
-        elseif nextCode == 2 and nums[i + 2] and nums[i + 3] and nums[i + 4] then
-          local r, g, b = nums[i+2], nums[i+3], nums[i+4]
-          if r >= 0 and r <= 255 and g >= 0 and g <= 255 and b >= 0 and b <= 255 then
-            currentAttrs["background"] = string.format("#%02x%02x%02x", r, g, b)
-          end
-          i = i + 4
-        end
-      elseif code == 39 then
-        currentAttrs["foreground"] = nil
-      elseif code == 49 then
-        currentAttrs["background"] = nil
-      elseif code >= 30 and code <= 37 then
-        currentAttrs["foreground"] = palette[code - 30]
-      elseif code >= 40 and code <= 47 then
-        currentAttrs["background"] = palette[code - 40]
-      elseif code >= 90 and code <= 97 then
-        currentAttrs["foreground"] = palette[code - 90 + 8]
-      elseif code >= 100 and code <= 107 then
-        currentAttrs["background"] = palette[code - 100 + 8]
-      end
-
-      i = i + 1
-    end
+      -- Non-SGR CSI sequences are stripped (cursor move, erase, etc.)
 
     elseif nextByte == 0x5D then
-      -- OSC sequence (\e]...BEL or \e]...\e\\)
-      -- Find terminator: BEL (0x07) or ST (\e\\)
-      local oscPos = escPos + 2
-      while oscPos <= #text do
-        local b = text:byte(oscPos)
-        if b == 0x07 then
-          pos = oscPos + 1
-          break
-        elseif b == 0x1B and text:byte(oscPos + 1) == 0x5C then
-          pos = oscPos + 2
-          break
-        end
-        oscPos = oscPos + 1
+      -- OSC sequence (\e]...BEL or \e]...\e\\) — strip entirely
+      local endPos = findOSCEnd(text, escPos + 2)
+      if endPos then
+        pos = endPos
+      else
+        break -- malformed, bail
       end
-      if oscPos > #text then
-        -- Malformed OSC, skip to end
-        break
+
+    elseif nextByte == 0x1B then
+      -- Consecutive ESCs — skip first, let next iteration handle second
+      pos = escPos + 1
+    elseif nextByte then
+      -- Other escape sequences
+      -- Charset sequences: ESC ( X or ESC ) X (3 bytes total)
+      -- Other 2-byte: ESC X (just skip ESC + next char)
+      local thirdByte = text:byte(escPos + 2)
+      if (nextByte == 0x28 or nextByte == 0x29) and thirdByte then
+        -- ESC ( or ESC ) charset designation — skip 3 bytes
+        pos = escPos + 3
+      else
+        -- Generic 2-byte ESC sequence — skip ESC + next char
+        pos = escPos + 2
       end
     else
-      -- Other escape sequences (\e(B, \e)>, etc.) — skip 1-2 chars
-      pos = escPos + 2
+      -- Bare ESC at end of string
+      pos = escPos + 1
     end
-
-    ::continue::
   end
 
   return table.concat(result)

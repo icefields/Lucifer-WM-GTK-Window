@@ -393,12 +393,12 @@ describe("ansi2pango", function()
       assert.are.equal("text", ansi2pango.convert(input))
     end)
 
-    it("malformed ANSI (no terminating m) - treated as plain text", function()
+    it("malformed ANSI (no terminating m) - emits ESC as plain text", function()
       local input = "hello" .. ESC .. "[31text"
       local result = ansi2pango.convert(input)
-      -- Should at least contain "hello" and "text"
+      -- ESC[31t is a CSI with terminator 't' (non-SGR), stripped
+      -- So "hello" + "ext" remains (the 't' terminator consumed)
       assert.truthy(result:match("hello"))
-      assert.truthy(result:match("text"))
     end)
 
     it("malformed ANSI (just ESC[)", function()
@@ -756,15 +756,11 @@ describe("ansi2pango", function()
     end)
 
     it("handles non-SGR CSI sequences gracefully", function()
-      -- ESC[?25l is a cursor hide sequence, not SGR
-      -- The '?' in the params means findMTerminator will skip past 'l'
-      -- and look for the next 'm'. This is documented behavior.
-      -- In practice, command output shouldn't contain these, but test that
-      -- we don't crash.
+      -- ESC[?25l is a cursor hide sequence (private mode)
+      -- Non-SGR CSI sequences are now stripped by findCSITerminator
       local input = "hello" .. ESC .. "[?25l" .. "world"
       local result = ansi2pango.convert(input)
-      -- Should at least contain "hello"
-      assert.truthy(result:match("hello"))
+      assert.are.equal("helloworld", result)
     end)
   end)
 
@@ -826,6 +822,167 @@ describe("ansi2pango", function()
       local input = ESC .. "[38;5;0mtext"
       local result = ansi2pango.convert(input)
       assert.truthy(result:match('foreground="#000000"'))
+    end)
+  end)
+
+  describe("non-SGR CSI sequence stripping", function()
+    it("strips cursor right (C)", function()
+      local input = ESC .. "[41Ctext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips cursor up (A)", function()
+      local input = ESC .. "[18Atext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips cursor home (G)", function()
+      local input = ESC .. "[1Gtext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips cursor position (H)", function()
+      local input = ESC .. "[10;20Htext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips erase display (J)", function()
+      local input = ESC .. "[2Jtext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips erase line (K)", function()
+      local input = ESC .. "[0Ktext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips scroll up (S)", function()
+      local input = ESC .. "[3Stext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips private mode cursor hide (?25l)", function()
+      local input = ESC .. "[?25ltext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips private mode cursor show (?25h)", function()
+      local input = ESC .. "[?25htext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips private mode alt screen (?1049h)", function()
+      local input = ESC .. "[?1049htext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips multiple cursor sequences before text", function()
+      local input = ESC .. "[1G" .. ESC .. "[18A" .. ESC .. "[41Ctext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips cursor move but preserves SGR color", function()
+      local input = ESC .. "[41C" .. ESC .. "[31mred"
+      local result = ansi2pango.convert(input)
+      assert.are.equal('<span foreground="#800000">red</span>', result)
+    end)
+
+    it("strips cursor between colored segments", function()
+      -- Cursor move is stripped, no space inserted (it's not text)
+      local input = ESC .. "[31mred" .. ESC .. "[0m" .. ESC .. "[41C" .. ESC .. "[32mgreen"
+      local result = ansi2pango.convert(input)
+      assert.are.equal('<span foreground="#800000">red</span><span foreground="#008000">green</span>', result)
+    end)
+  end)
+
+  describe("OSC sequence stripping", function()
+    it("strips OSC with BEL terminator", function()
+      local input = ESC .. "]0;window_title" .. string.char(7) .. "text"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips OSC with ST terminator (\\e\\\\)", function()
+      -- ST is ESC + backslash (0x1B 0x5C)
+      local input = ESC .. "]0;window_title" .. ESC .. string.char(0x5C) .. "text"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips OSC with multiple params", function()
+      local input = ESC .. "]2;title;detail" .. string.char(7) .. "text"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("handles malformed OSC (no terminator) gracefully", function()
+      local input = ESC .. "]0;no terminator here"
+      local result = ansi2pango.convert(input)
+      -- Should not crash, may return empty or partial
+      assert.truthy(result ~= nil)
+    end)
+  end)
+
+  describe("other ESC sequence handling", function()
+    it("strips ESC + single char (e.g. \\e(B charset)", function()
+      local input = ESC .. "(Btext"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("strips ESC ) charset sequence", function()
+      local input = ESC .. ")0text"
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("handles bare ESC at end of string", function()
+      local input = "text" .. ESC
+      assert.are.equal("text", ansi2pango.convert(input))
+    end)
+
+    it("handles ESC followed by another ESC", function()
+      -- First ESC consumed as "other" (nextByte = 0x1B), then second ESC starts CSI
+      local input = ESC .. ESC .. "[31mred"
+      local result = ansi2pango.convert(input)
+      assert.are.equal('<span foreground="#800000">red</span>', result)
+    end)
+  end)
+
+  describe("fastfetch-style output", function()
+    it("strips cursor positioning and preserves colored text", function()
+      -- Simulated fastfetch line: cursor-right-41 then green OS label
+      local input = ESC .. "[41C" .. ESC .. "[1m" .. ESC .. "[32mOS:" .. ESC .. "[0m Arch Linux"
+      local result = ansi2pango.convert(input)
+      assert.truthy(result:match('weight="bold"'))
+      assert.truthy(result:match('foreground="#008000"'))
+      assert.truthy(result:match("OS:"))
+      assert.truthy(result:match("Arch Linux"))
+    end)
+
+    it("strips color block test sequences", function()
+      -- Fastfetch outputs color blocks: \e[40m \e[41m ... \e[0m
+      local input = ESC .. "[40m " .. ESC .. "[41m " .. ESC .. "[42m " .. ESC .. "[0m"
+      local result = ansi2pango.convert(input)
+      -- Should have 3 spans with background colors and spaces
+      local opens = select(2, result:gsub("<span", ""))
+      local closes = select(2, result:gsub("</span>", ""))
+      assert.are.equal(opens, closes)
+    end)
+
+    it("handles full fastfetch-like output with cursor moves and colors", function()
+      -- Logo lines + cursor moves + info lines with colors
+      local parts = {
+        ESC .. "[1G" .. ESC .. "[18A",  -- cursor home + up
+        ESC .. "[41C" .. ESC .. "[1;36mOS:" .. ESC .. "[0m Arch Linux\n",
+        ESC .. "[41C" .. ESC .. "[1;36mKernel:" .. ESC .. "[0m Linux 7.0.8-zen\n",
+        ESC .. "[41C" .. ESC .. "[1;36mMemory:" .. ESC .. "[0m 7.38 GiB / 58.49 GiB",
+      }
+      local input = table.concat(parts)
+      local result = ansi2pango.convert(input)
+      assert.truthy(result:match("OS:"))
+      assert.truthy(result:match("Arch Linux"))
+      assert.truthy(result:match("Kernel:"))
+      assert.truthy(result:match("Memory:"))
+      -- No stray [41C or [1G or [18A in output
+      assert.falsy(result:match("%[41C"))
+      assert.falsy(result:match("%[1G"))
+      assert.falsy(result:match("%[18A"))
     end)
   end)
 

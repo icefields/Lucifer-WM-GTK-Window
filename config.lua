@@ -30,7 +30,7 @@ return {
       tabTitleFontSize = 12,
     },
     {
-      command = "neofetch --stdout 2>/dev/null || echo 'System info unavailable'",
+      command = "fastfetch --logo none 2>/dev/null || echo 'System info unavailable'",
       fallback = "System info unavailable",
       titleScript = "echo '🖥 System'",
       titleFallback = "System",
