@@ -567,4 +567,176 @@ describe("validateConfig edge cases", function()
     local ok = logic.validateConfig({})
     assert.truthy(ok)
   end)
+
+  it("accepts group with children", function()
+    local ok = logic.validateConfig({
+      tabs = {
+        {
+          titleFallback = "Weather",
+          children = {
+            { command = "curl wttr.in", fallback = "N/A" },
+            { command = "curl wttr.in/chicago", fallback = "N/A" },
+          }
+        }
+      }
+    })
+    assert.truthy(ok)
+  end)
+
+  it("rejects group with non-table children", function()
+    local ok, err = logic.validateConfig({
+      tabs = {
+        { titleFallback = "Bad", children = "not a table" }
+      }
+    })
+    assert.falsy(ok)
+    assert.truthy(err:match("children must be a table"))
+  end)
+
+  it("rejects child with empty command", function()
+    local ok, err = logic.validateConfig({
+      tabs = {
+        {
+          titleFallback = "Bad",
+          children = { { command = "" } }
+        }
+      }
+    })
+    assert.falsy(ok)
+    assert.truthy(err:match("must not be empty"))
+  end)
+end)
+
+describe("flattenTabs()", function()
+  it("flattens leaf tabs as-is", function()
+    local tabs = {
+      { command = "echo a", titleFallback = "A" },
+      { command = "echo b", titleFallback = "B" },
+    }
+    local flat, cn = logic.flattenTabs(tabs)
+    assert.are.equal(2, #flat)
+    assert.are.equal("leaf", flat[1].type)
+    assert.are.equal("leaf", flat[2].type)
+    assert.are.equal("echo a", flat[1].command)
+    assert.are.equal("echo b", flat[2].command)
+    assert.are.equal(0, #cn)
+  end)
+
+  it("creates group entry for multi-child tabs", function()
+    local tabs = {
+      {
+        titleFallback = "Weather",
+        children = {
+          { command = "curl wttr.in/local", titleFallback = "Local" },
+          { command = "curl wttr.in/chicago", titleFallback = "Chicago" },
+        },
+      },
+    }
+    local flat, cn = logic.flattenTabs(tabs)
+    assert.are.equal(1, #flat)
+    assert.are.equal("group", flat[1].type)
+    assert.are.equal("Weather", flat[1].titleFallback)
+    assert.are.equal(1, #cn)
+    assert.are.equal(2, #cn[1].children)
+    assert.are.equal("curl wttr.in/local", cn[1].children[1].command)
+    assert.are.equal("Chicago", cn[1].children[2].titleFallback)
+  end)
+
+  it("inlines single-child groups (no child notebook)", function()
+    local tabs = {
+      {
+        titleFallback = "Only One",
+        children = {
+          { command = "echo solo", titleFallback = "Solo" },
+        },
+      },
+    }
+    local flat, cn = logic.flattenTabs(tabs)
+    assert.are.equal(1, #flat)
+    assert.are.equal("leaf", flat[1].type)
+    assert.are.equal("echo solo", flat[1].command)
+    assert.are.equal("Solo", flat[1].titleFallback)
+    assert.are.equal(0, #cn)
+  end)
+
+  it("mixes groups and leaf tabs", function()
+    local tabs = {
+      {
+        titleFallback = "Weather",
+        children = {
+          { command = "curl wttr.in/local", titleFallback = "Local" },
+          { command = "curl wttr.in/chicago", titleFallback = "Chicago" },
+        },
+      },
+      { command = "echo btc", titleFallback = "BTC" },
+    }
+    local flat, cn = logic.flattenTabs(tabs)
+    assert.are.equal(2, #flat)
+    assert.are.equal("group", flat[1].type)
+    assert.are.equal("leaf", flat[2].type)
+    assert.are.equal(1, #cn)
+  end)
+
+  it("assigns childNotebookIdx to group entries", function()
+    local tabs = {
+      {
+        titleFallback = "G1",
+        children = {
+          { command = "a" },
+          { command = "b" },
+        },
+      },
+      {
+        titleFallback = "G2",
+        children = {
+          { command = "c" },
+          { command = "d" },
+          { command = "e" },
+        },
+      },
+    }
+    local flat, cn = logic.flattenTabs(tabs)
+    assert.are.equal(1, flat[1].childNotebookIdx)
+    assert.are.equal(2, flat[2].childNotebookIdx)
+    assert.are.equal(2, #cn[1].children)
+    assert.are.equal(3, #cn[2].children)
+  end)
+end)
+
+describe("mergeDefaults()", function()
+  it("child overrides parent values", function()
+    local parent = { contentFont = "Parent", contentFontSize = 12 }
+    local child = { command = "echo hi", contentFont = "Child" }
+    local merged = logic.mergeDefaults(child, parent)
+    assert.are.equal("Child", merged.contentFont)
+    assert.are.equal(12, merged.contentFontSize)
+    assert.are.equal("echo hi", merged.command)
+  end)
+
+  it("parent provides fallbacks for missing child values", function()
+    local parent = { contentFont = "Mono", contentFontSize = 14, tabTitleFont = "Sans" }
+    local child = { command = "echo test" }
+    local merged = logic.mergeDefaults(child, parent)
+    assert.are.equal("Mono", merged.contentFont)
+    assert.are.equal(14, merged.contentFontSize)
+    assert.are.equal("Sans", merged.tabTitleFont)
+  end)
+
+  it("does not inherit children table from parent", function()
+    local parent = { children = { "should", "not", "inherit" }, contentFont = "Mono" }
+    local child = { command = "echo hi" }
+    local merged = logic.mergeDefaults(child, parent)
+    assert.is_nil(merged.children)
+    assert.are.equal("Mono", merged.contentFont)
+  end)
+
+  it("does not inherit command/fallback/titleScript/titleFallback from parent", function()
+    local parent = { command = "parent_cmd", fallback = "parent_fb", titleScript = "parent_ts", titleFallback = "parent_tf", contentFont = "Mono" }
+    local child = { command = "child_cmd" }
+    local merged = logic.mergeDefaults(child, parent)
+    assert.are.equal("child_cmd", merged.command)
+    assert.is_nil(merged.fallback)
+    assert.is_nil(merged.titleScript)
+    assert.is_nil(merged.titleFallback)
+  end)
 end)

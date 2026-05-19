@@ -40,6 +40,80 @@ function M.loadConfig(path)
   return dofile(path)
 end
 
+--- Flatten a nested tab config into a linear list of display entries.
+-- Each entry is one of:
+--   { type = "leaf", command = ..., titleScript = ..., ... }
+--   { type = "group", titleScript = ..., titleFallback = ..., childNotebook = <index> }
+-- Groups with a single child are inlined (no child notebook).
+-- Returns: flat list, child_notebooks (list of { parent_index, child_entries })
+function M.flattenTabs(tabs)
+  local flat = {}
+  local childNotebooks = {}
+
+  for i, tab in ipairs(tabs) do
+    if tab.children and #tab.children > 0 then
+      if #tab.children == 1 then
+        -- Single child: inline it, inheriting parent defaults
+        local child = M.mergeDefaults(tab.children[1], tab)
+        child.type = "leaf"
+        flat[#flat + 1] = child
+      else
+        -- Multiple children: create a group entry
+        local groupEntry = {
+          type = "group",
+          titleScript = tab.titleScript,
+          titleFallback = tab.titleFallback or ("Tab " .. i),
+          contentFont = tab.contentFont,
+          contentFontSize = tab.contentFontSize,
+          tabTitleFont = tab.tabTitleFont,
+          tabTitleFontSize = tab.tabTitleFontSize,
+          interval = tab.interval,
+        }
+        flat[#flat + 1] = groupEntry
+        local parentIdx = #flat
+
+        -- Flatten children, inheriting parent defaults
+        local childEntries = {}
+        for j, child in ipairs(tab.children) do
+          local entry = M.mergeDefaults(child, tab)
+          entry.type = "leaf"
+          childEntries[#childEntries + 1] = entry
+        end
+
+        childNotebooks[#childNotebooks + 1] = {
+          parentIndex = parentIdx,
+          children = childEntries,
+        }
+        groupEntry.childNotebookIdx = #childNotebooks
+      end
+    else
+      -- Leaf tab (no children)
+      local entry = {}
+      for k, v in pairs(tab) do entry[k] = v end
+      entry.type = "leaf"
+      flat[#flat + 1] = entry
+    end
+  end
+
+  return flat, childNotebooks
+end
+
+--- Merge child config with parent defaults.
+-- Child values take priority; parent provides fallbacks.
+function M.mergeDefaults(child, parent)
+  local merged = {}
+  for k, v in pairs(parent) do
+    if k ~= "children" and k ~= "command" and k ~= "fallback"
+       and k ~= "titleScript" and k ~= "titleFallback" then
+      merged[k] = v
+    end
+  end
+  for k, v in pairs(child) do
+    merged[k] = v
+  end
+  return merged
+end
+
 -- Lazy-load tracker
 function M.createLoadTracker()
   local loaded = {}
@@ -62,11 +136,25 @@ function M.validateConfig(config)
   end
   local tabs = config.tabs or {}
   for i, tab in ipairs(tabs) do
-    if type(tab.command) ~= "string" and type(tab.command) ~= "nil" then
-      return false, "tab " .. i .. ": command must be string or nil"
-    end
-    if tab.command == "" then
-      return false, "tab " .. i .. ": command must not be empty string"
+    if tab.children then
+      if type(tab.children) ~= "table" then
+        return false, "tab " .. i .. ": children must be a table"
+      end
+      for j, child in ipairs(tab.children) do
+        if type(child.command) ~= "string" and type(child.command) ~= "nil" then
+          return false, "tab " .. i .. " child " .. j .. ": command must be string or nil"
+        end
+        if child.command == "" then
+          return false, "tab " .. i .. " child " .. j .. ": command must not be empty string"
+        end
+      end
+    else
+      if type(tab.command) ~= "string" and type(tab.command) ~= "nil" then
+        return false, "tab " .. i .. ": command must be string or nil"
+      end
+      if tab.command == "" then
+        return false, "tab " .. i .. ": command must not be empty string"
+      end
     end
     if tab.interval and type(tab.interval) ~= "number" then
       return false, "tab " .. i .. ": interval must be a number"
